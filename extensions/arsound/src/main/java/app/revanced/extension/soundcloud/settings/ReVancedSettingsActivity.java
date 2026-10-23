@@ -774,6 +774,93 @@ public final class ReVancedSettingsActivity extends Activity {
                 v -> editOpenMusic(openMusicDescription[0]));
         openMusicDescription[0] = (TextView) ((ViewGroup) openMusicRow).getChildAt(1);
         list.addView(openMusicRow);
+        list.addView(createActionRow(
+                text("Войти в Яндекс Музыку", "Sign in to Yandex Music"),
+                text("Полный доступ и «Моя волна» Яндекса в Open Music. Вход по коду устройства, без логина и пароля.",
+                        "Full Yandex access and My Wave in Open Music. Device-code sign-in, no login or password."),
+                v -> connectYandex()));
+    }
+
+    private void connectYandex() {
+        Toast.makeText(this, text("Запрашиваю код…", "Requesting a code…"), Toast.LENGTH_SHORT).show();
+        Utils.runOnBackgroundThread(() -> {
+            try {
+                app.revanced.extension.soundcloud.gateway.GatewayAuth auth =
+                        new app.revanced.extension.soundcloud.gateway.GatewayAuth();
+                app.revanced.extension.soundcloud.gateway.GatewayAuth.DeviceStart start = auth.start();
+                Utils.runOnMainThread(() -> showYandexCodeDialog(auth, start));
+            } catch (Exception e) {
+                Utils.runOnMainThread(() -> Toast.makeText(this,
+                        text("Не удалось начать вход: ", "Could not start sign-in: ") + e.getMessage(),
+                        Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void showYandexCodeDialog(app.revanced.extension.soundcloud.gateway.GatewayAuth auth,
+                                      app.revanced.extension.soundcloud.gateway.GatewayAuth.DeviceStart start) {
+        final boolean[] cancelled = {false};
+        TextView message = new TextView(this);
+        message.setPadding(dimen("spacing_m"), dimen("spacing_s"), dimen("spacing_m"), 0);
+        message.setTextIsSelectable(true);
+        message.setText(text(
+                "Код: " + start.userCode + "\n\nНажми «Открыть страницу» (код скопируется), вставь его на странице Яндекса "
+                        + "и подтверди доступ. Ждём подтверждения…",
+                "Code: " + start.userCode + "\n\nTap \"Open page\" (the code is copied), paste it on the Yandex page "
+                        + "and confirm access. Waiting for confirmation…"));
+        new app.revanced.extension.soundcloud.shared.ArsoundDialog(this)
+                .setTitle(text("Вход в Яндекс Музыку", "Sign in to Yandex Music"))
+                .setView(message)
+                .setPositiveButton(text("Открыть страницу", "Open page"), (dialog, which) -> {
+                    try {
+                        android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                        if (clipboard != null) {
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Yandex code", start.userCode));
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    try {
+                        startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(start.verificationUrl)));
+                    } catch (Exception ignored) {
+                    }
+                })
+                .setNegativeButton(text("Отмена", "Cancel"), (dialog, which) -> cancelled[0] = true)
+                .show();
+        pollYandex(auth, cancelled, start.intervalSeconds, start.expiresInSeconds);
+    }
+
+    private void pollYandex(app.revanced.extension.soundcloud.gateway.GatewayAuth auth,
+                            boolean[] cancelled, int intervalSeconds, int expiresInSeconds) {
+        final long deadline = System.currentTimeMillis() + Math.max(60, expiresInSeconds) * 1000L;
+        Utils.runOnBackgroundThread(() -> {
+            int wait = Math.max(3, intervalSeconds);
+            while (!cancelled[0] && System.currentTimeMillis() < deadline) {
+                try {
+                    Thread.sleep(wait * 1000L);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (cancelled[0]) return;
+                String status;
+                try {
+                    status = auth.poll();
+                } catch (Exception e) {
+                    continue; // transient network error; keep trying until the deadline
+                }
+                if ("connected".equals(status)) {
+                    Utils.runOnMainThread(() -> Toast.makeText(this,
+                            text("Яндекс Музыка подключена ✓", "Yandex Music connected ✓"), Toast.LENGTH_LONG).show());
+                    return;
+                }
+                if ("expired".equals(status) || "error".equals(status)) {
+                    Utils.runOnMainThread(() -> Toast.makeText(this,
+                            text("Вход не завершён (", "Sign-in not completed (") + status + ")", Toast.LENGTH_LONG).show());
+                    return;
+                }
+                if ("slow_down".equals(status)) wait += 2;
+            }
+        });
     }
 
     private String openMusicDescription() {
