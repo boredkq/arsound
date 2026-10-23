@@ -29,11 +29,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4.2.1
 
-      - name: Compile the Arsound extension
+      - name: Build patches bundle
         env:
           # The ReVanced Gradle plugin lives in GitHub Packages; the built-in token reads it.
           ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
           ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x ./gradlew
-          ./gradlew :extensions:arsound:assembleRelease --stacktrace --no-daemon
+          ./gradlew build -x test --stacktrace --no-daemon
+
+      - name: Upload patches bundle (.rvp)
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: patches-rvp
+          path: "**/*.rvp"
+          if-no-files-found: error
