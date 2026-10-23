@@ -22,6 +22,10 @@ jobs:
           java-version: "21"
 
       - uses: android-actions/setup-android@v3.2.1
+        with:
+          # Avoid the obsolete "tools" package the action otherwise tries to install (it 404s and
+          # fails the step). Gradle/AGP downloads the platform and build-tools it needs itself.
+          packages: ""
 
       - uses: gradle/actions/setup-gradle@v4.2.1
 
