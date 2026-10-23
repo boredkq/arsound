@@ -767,6 +767,65 @@ public final class ReVancedSettingsActivity extends Activity {
                 Settings.isDataDomePromptEnabled(),
                 (button, checked) -> Settings.putBoolean(Settings.DATADOME_PROMPT, checked)
         ));
+        TextView[] openMusicDescription = new TextView[1];
+        View openMusicRow = createActionRow(
+                text("Другие источники (Open Music)", "Other sources (Open Music)"),
+                openMusicDescription(),
+                v -> editOpenMusic(openMusicDescription[0]));
+        openMusicDescription[0] = (TextView) ((ViewGroup) openMusicRow).getChildAt(1);
+        list.addView(openMusicRow);
+    }
+
+    private String openMusicDescription() {
+        String base = app.revanced.extension.soundcloud.gateway.GatewayConfig.baseUrl();
+        if (base.isEmpty()) {
+            return text("Свой сервер Open Music: Spotify, Deezer, Tidal, Qobuz и другие прямо в поиске Arsound. Нажмите, чтобы настроить.",
+                    "Your Open Music server: Spotify, Deezer, Tidal, Qobuz and more right in the Arsound search. Tap to set up.");
+        }
+        return base + " · " + app.revanced.extension.soundcloud.gateway.GatewayConfig.quality()
+                + text(" (нажмите, чтобы изменить)", " (tap to change)");
+    }
+
+    private void editOpenMusic(TextView description) {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dimen("spacing_m"), 0, dimen("spacing_m"), 0);
+        android.widget.EditText base = new android.widget.EditText(this);
+        base.setHint("https://my-open-music.example.com");
+        base.setText(app.revanced.extension.soundcloud.gateway.GatewayConfig.baseUrl());
+        android.widget.EditText quality = new android.widget.EditText(this);
+        quality.setHint("HIGH / LOSSLESS / HIRES / LOW");
+        quality.setText(app.revanced.extension.soundcloud.gateway.GatewayConfig.quality());
+        android.widget.EditText key = new android.widget.EditText(this);
+        key.setHint(text("Ключ доступа (необязательно)", "Access key (optional)"));
+        key.setText(app.revanced.extension.soundcloud.gateway.GatewayConfig.accessKey());
+        form.addView(base);
+        form.addView(quality);
+        form.addView(key);
+        new app.revanced.extension.soundcloud.shared.ArsoundDialog(this)
+                .setTitle(text("Open Music", "Open Music"))
+                .setView(form)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    String url = base.getText().toString().trim();
+                    if (!url.isEmpty() && !url.startsWith("http://") && !url.startsWith("https://")) {
+                        Toast.makeText(this, text("Адрес должен начинаться с http:// или https://",
+                                "The address must start with http:// or https://"), Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    String q = quality.getText().toString().trim().toUpperCase(java.util.Locale.ROOT);
+                    if (!q.isEmpty() && !q.equals("LOW") && !q.equals("HIGH") && !q.equals("LOSSLESS") && !q.equals("HIRES")) {
+                        Toast.makeText(this, text("Качество: LOW, HIGH, LOSSLESS или HIRES",
+                                "Quality: LOW, HIGH, LOSSLESS or HIRES"), Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    Settings.putString(app.revanced.extension.soundcloud.gateway.GatewayConfig.KEY_BASE_URL, url);
+                    Settings.putString(app.revanced.extension.soundcloud.gateway.GatewayConfig.KEY_QUALITY, q.isEmpty() ? "HIGH" : q);
+                    Settings.putString(app.revanced.extension.soundcloud.gateway.GatewayConfig.KEY_ACCESS_KEY,
+                            key.getText().toString().trim());
+                    description.setText(openMusicDescription());
+                })
+                .show();
     }
 
     private void addPlaybackSection(LinearLayout list) {

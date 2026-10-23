@@ -41,6 +41,10 @@ import app.revanced.extension.shared.Logger;
 /**
  * Search and audio streams from YouTube Music, through NewPipeExtractor.
  * Used for tracks that SoundCloud does not let download. All calls block: run them off the main thread.
+ *
+ * <p>The source-neutral models ({@link SourceTrack}, {@link SourceAlbum}, {@link SourceArtist}) and the
+ * {@link Progress} callback live beside this class so other {@link MusicSource} backends can share them;
+ * {@link YoutubeSource} wraps these static methods behind the interface.</p>
  */
 public final class OtherSource {
     private static final String USER_AGENT =
@@ -48,23 +52,6 @@ public final class OtherSource {
     private static boolean initialized;
 
     private OtherSource() {
-    }
-
-    public static final class Track {
-        public final String url;
-        public final String title;
-        public final String artist;
-        public final long durationSeconds;
-        /** The album cover, or null. */
-        public final String coverUrl;
-
-        Track(String url, String title, String artist, long durationSeconds, String coverUrl) {
-            this.url = url;
-            this.title = title;
-            this.artist = artist;
-            this.durationSeconds = durationSeconds;
-            this.coverUrl = coverUrl;
-        }
     }
 
     /**
@@ -87,9 +74,9 @@ public final class OtherSource {
         return ServiceList.YouTube;
     }
 
-    public static List<Track> search(String query) throws Exception {
+    public static List<SourceTrack> search(String query) throws Exception {
         StreamingService service = service();
-        List<Track> tracks = new ArrayList<>();
+        List<SourceTrack> tracks = new ArrayList<>();
         // Songs of YouTube Music first: they are clean album audio. Plain videos only if there are none.
         for (String filter : new String[]{YoutubeSearchQueryHandlerFactory.MUSIC_SONGS, YoutubeSearchQueryHandlerFactory.VIDEOS}) {
             SearchInfo info = SearchInfo.getInfo(service,
@@ -99,36 +86,12 @@ public final class OtherSource {
                 StreamInfoItem stream = (StreamInfoItem) item;
                 String artist = stream.getUploaderName();
                 if (artist != null && artist.endsWith(" - Topic")) artist = artist.substring(0, artist.length() - 8);
-                tracks.add(new Track(stream.getUrl(), stream.getName(), artist == null ? "" : artist, stream.getDuration(),
+                tracks.add(new SourceTrack(stream.getUrl(), stream.getName(), artist == null ? "" : artist, stream.getDuration(),
                         coverUrl(stream.getThumbnails())));
             }
             if (!tracks.isEmpty()) break;
         }
         return tracks;
-    }
-
-    public static final class Album {
-        public final String url;
-        public final String title;
-        public final String artist;
-        public final long trackCount;
-
-        Album(String url, String title, String artist, long trackCount) {
-            this.url = url;
-            this.title = title;
-            this.artist = artist;
-            this.trackCount = trackCount;
-        }
-    }
-
-    public static final class Artist {
-        public final String url;
-        public final String name;
-
-        Artist(String url, String name) {
-            this.url = url;
-            this.name = name;
-        }
     }
 
     private static List<InfoItem> searchItems(String query, String filter) throws Exception {
@@ -142,34 +105,34 @@ public final class OtherSource {
         return name.endsWith(" - Topic") ? name.substring(0, name.length() - 8) : name;
     }
 
-    private static Album toAlbum(InfoItem item, String fallbackArtist) {
+    private static SourceAlbum toAlbum(InfoItem item, String fallbackArtist) {
         if (!(item instanceof PlaylistInfoItem)) return null;
         PlaylistInfoItem playlist = (PlaylistInfoItem) item;
         String artist = artistName(playlist.getUploaderName());
-        return new Album(playlist.getUrl(), playlist.getName(), artist.isEmpty() ? fallbackArtist : artist,
+        return new SourceAlbum(playlist.getUrl(), playlist.getName(), artist.isEmpty() ? fallbackArtist : artist,
                 playlist.getStreamCount());
     }
 
     /** Albums and singles of YouTube Music. */
-    public static List<Album> searchAlbums(String query) throws Exception {
-        List<Album> albums = new ArrayList<>();
+    public static List<SourceAlbum> searchAlbums(String query) throws Exception {
+        List<SourceAlbum> albums = new ArrayList<>();
         for (InfoItem item : searchItems(query, YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS)) {
-            Album album = toAlbum(item, "");
+            SourceAlbum album = toAlbum(item, "");
             if (album != null) albums.add(album);
         }
         return albums;
     }
 
-    public static List<Artist> searchArtists(String query) throws Exception {
-        List<Artist> artists = new ArrayList<>();
+    public static List<SourceArtist> searchArtists(String query) throws Exception {
+        List<SourceArtist> artists = new ArrayList<>();
         for (InfoItem item : searchItems(query, YoutubeSearchQueryHandlerFactory.MUSIC_ARTISTS)) {
-            if (item instanceof ChannelInfoItem) artists.add(new Artist(item.getUrl(), item.getName()));
+            if (item instanceof ChannelInfoItem) artists.add(new SourceArtist(item.getUrl(), item.getName()));
         }
         return artists;
     }
 
     /** The tracks of an album, in album order. */
-    public static List<Track> albumTracks(Album album) throws Exception {
+    public static List<SourceTrack> albumTracks(SourceAlbum album) throws Exception {
         StreamingService service = service();
         PlaylistInfo info = PlaylistInfo.getInfo(service, album.url);
         List<StreamInfoItem> items = new ArrayList<>(info.getRelatedItems());
@@ -179,22 +142,22 @@ public final class OtherSource {
             items.addAll(more.getItems());
             page = more.getNextPage();
         }
-        List<Track> tracks = new ArrayList<>();
+        List<SourceTrack> tracks = new ArrayList<>();
         for (StreamInfoItem stream : items) {
             String artist = artistName(stream.getUploaderName());
             // Tracks of an album share its cover.
             String cover = coverUrl(info.getThumbnails());
-            tracks.add(new Track(stream.getUrl(), stream.getName(), artist.isEmpty() ? album.artist : artist,
+            tracks.add(new SourceTrack(stream.getUrl(), stream.getName(), artist.isEmpty() ? album.artist : artist,
                     stream.getDuration(), cover != null ? cover : coverUrl(stream.getThumbnails())));
         }
         return tracks;
     }
 
     /** Albums and singles of an artist, from the releases tab of the artist's channel. */
-    public static List<Album> artistAlbums(Artist artist) throws Exception {
+    public static List<SourceAlbum> artistAlbums(SourceArtist artist) throws Exception {
         StreamingService service = service();
         ChannelInfo channel = ChannelInfo.getInfo(service, artist.url);
-        List<Album> albums = new ArrayList<>();
+        List<SourceAlbum> albums = new ArrayList<>();
         for (ListLinkHandler tab : channel.getTabs()) {
             if (!tab.getContentFilters().contains(ChannelTabs.ALBUMS)) continue;
             ChannelTabInfo info = ChannelTabInfo.getInfo(service, tab);
@@ -206,7 +169,7 @@ public final class OtherSource {
                 page = more.getNextPage();
             }
             for (InfoItem item : items) {
-                Album album = toAlbum(item, artist.name);
+                SourceAlbum album = toAlbum(item, artist.name);
                 if (album != null) albums.add(album);
             }
         }
@@ -252,10 +215,6 @@ public final class OtherSource {
         RefusedException(String message) {
             super(message);
         }
-    }
-
-    public interface Progress {
-        void onProgress(int percent);
     }
 
     /** The file size, which YouTube puts into the stream link. */

@@ -30,8 +30,10 @@ import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,10 +43,10 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import app.arsound.shaded.newpipe.extractor.stream.AudioStream;
 import app.revanced.extension.shared.Logger;
 import app.revanced.extension.shared.ResourceType;
 import app.revanced.extension.shared.Utils;
+import app.revanced.extension.soundcloud.gateway.OpenMusicGatewaySource;
 import app.revanced.extension.soundcloud.local.LocalMusic;
 import app.revanced.extension.soundcloud.permissions.WelcomePermissions;
 import app.revanced.extension.soundcloud.shared.HelpBadge;
@@ -69,6 +71,22 @@ public final class SearchSourceSwitch {
     private static WeakReference<Activity> activity = new WeakReference<>(null);
     private static ViewTreeObserver.OnGlobalLayoutListener layoutListener;
     private static boolean arsoundSelected;
+    /**
+     * The non-SoundCloud sources behind the Arsound segment. YouTube is always present; the Open Music
+     * gateway (Phase 2) appends itself here only when configured, and the visible N-way picker lands with it.
+     */
+    private static final YoutubeSource YOUTUBE = new YoutubeSource();
+    private static final OpenMusicGatewaySource OPEN_MUSIC = new OpenMusicGatewaySource();
+    /** The source the Arsound segment currently searches and plays through. */
+    private static MusicSource activeSource = YOUTUBE;
+
+    /** Sources available now: YouTube always, Open Music once its base URL is set (Settings → Arsound). */
+    private static List<MusicSource> sources() {
+        List<MusicSource> list = new ArrayList<>();
+        list.add(YOUTUBE);
+        if (app.revanced.extension.soundcloud.gateway.GatewayConfig.isConfigured()) list.add(OPEN_MUSIC);
+        return list;
+    }
     private static WeakReference<Screen> screen = new WeakReference<>(null);
 
     private static MediaPlayer player;
@@ -137,6 +155,8 @@ public final class SearchSourceSwitch {
         final TextView soundCloudButton;
         final TextView arsoundButton;
         final LinearLayout arsoundSegment;
+        /** Pills to pick the Arsound source; shown only when more than one source is available. */
+        final LinearLayout sourceChips;
         final TextView help;
         final FrameLayout results;
         final LinearLayout list;
@@ -185,6 +205,14 @@ public final class SearchSourceSwitch {
             bar.addView(toggle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
             coordinator.addView(bar, 1, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            // A pill row to pick the Arsound source; filled and shown by rebuildSourceChips().
+            sourceChips = new LinearLayout(context);
+            sourceChips.setOrientation(LinearLayout.HORIZONTAL);
+            sourceChips.setPadding(dp(context, 16), 0, dp(context, 16), dp(context, 6));
+            sourceChips.setVisibility(View.GONE);
+            coordinator.addView(sourceChips, coordinator.indexOfChild(bar) + 1, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             results = new FrameLayout(context);
@@ -287,7 +315,48 @@ public final class SearchSourceSwitch {
             soundCloudResults.setVisibility(arsoundSelected ? View.GONE : View.VISIBLE);
             results.setVisibility(arsoundSelected ? View.VISIBLE : View.GONE);
             tabsBar.setVisibility(arsoundSelected ? View.VISIBLE : View.GONE);
+            rebuildSourceChips();
             if (arsoundSelected) search();
+        }
+
+        /** Rebuilds the source pills from the sources available now, highlighting the active one. */
+        void rebuildSourceChips() {
+            List<MusicSource> list = sources();
+            if (!list.contains(activeSource)) activeSource = list.get(0);
+            sourceChips.removeAllViews();
+            if (list.size() < 2 || !arsoundSelected) {
+                sourceChips.setVisibility(View.GONE);
+                return;
+            }
+            sourceChips.setVisibility(View.VISIBLE);
+            for (MusicSource src : list) {
+                boolean selected = src == activeSource;
+                TextView chip = new TextView(context);
+                chip.setText(src.displayName());
+                chip.setGravity(Gravity.CENTER);
+                chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                chip.setTypeface(Typeface.DEFAULT_BOLD);
+                chip.setPadding(dp(context, 14), dp(context, 6), dp(context, 14), dp(context, 6));
+                GradientDrawable fill = new GradientDrawable();
+                fill.setCornerRadius(dp(context, 999));
+                fill.setColor(selected ? withAlpha(textColor, 0xFF) : withAlpha(textColor, 0x1A));
+                chip.setBackground(fill);
+                chip.setTextColor(selected ? inverse(textColor) : withAlpha(textColor, 0xB0));
+                chip.setOnClickListener(v -> selectSource(src));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.rightMargin = dp(context, 8);
+                sourceChips.addView(chip, lp);
+            }
+        }
+
+        void selectSource(MusicSource src) {
+            if (src == activeSource) return;
+            stopPreview();
+            activeSource = src;
+            rebuildSourceChips();
+            shownQuery = null;
+            search();
         }
 
         void style(View segment, TextView label, boolean selected) {
@@ -318,21 +387,21 @@ public final class SearchSourceSwitch {
             spinner.setVisibility(View.VISIBLE);
             network.execute(() -> {
                 // Albums and artists are asked for at the same time as tracks; their failure only hides them.
-                java.util.concurrent.Future<List<OtherSource.Album>> albums =
-                        extra.submit(() -> OtherSource.searchAlbums(query));
-                java.util.concurrent.Future<List<OtherSource.Artist>> artists =
-                        extra.submit(() -> OtherSource.searchArtists(query));
-                List<OtherSource.Track> found = null;
+                java.util.concurrent.Future<List<SourceAlbum>> albums =
+                        extra.submit(() -> activeSource.searchAlbums(query));
+                java.util.concurrent.Future<List<SourceArtist>> artists =
+                        extra.submit(() -> activeSource.searchArtists(query));
+                List<SourceTrack> found = null;
                 Exception error = null;
                 try {
-                    found = OtherSource.search(query);
+                    found = activeSource.search(query);
                 } catch (Exception ex) {
                     error = ex;
                     Logger.printException(() -> "Arsound search failed", ex);
                 }
-                List<OtherSource.Album> foundAlbums = resultOrEmpty(albums);
-                List<OtherSource.Artist> foundArtists = resultOrEmpty(artists);
-                List<OtherSource.Track> tracks = error != null ? new java.util.ArrayList<>() : found;
+                List<SourceAlbum> foundAlbums = resultOrEmpty(albums);
+                List<SourceArtist> foundArtists = resultOrEmpty(artists);
+                List<SourceTrack> tracks = error != null ? new java.util.ArrayList<>() : found;
                 boolean failed = error != null;
                 boolean blocked = isRegionBlock(error);
                 handler.post(() -> {
@@ -388,7 +457,7 @@ public final class SearchSourceSwitch {
             }
         }
 
-        void showResults(List<OtherSource.Artist> artists, List<OtherSource.Album> albums, List<OtherSource.Track> tracks) {
+        void showResults(List<SourceArtist> artists, List<SourceAlbum> albums, List<SourceTrack> tracks) {
             shown = root;
             clearList();
             // "All" shows a few of each; a tab shows everything of its kind.
@@ -396,7 +465,7 @@ public final class SearchSourceSwitch {
             if ((all || tab == 2) && !artists.isEmpty()) {
                 if (all) list.addView(header(text("Исполнители", "Artists")));
                 for (int i = 0; i < (all ? Math.min(3, artists.size()) : artists.size()); i++) {
-                    OtherSource.Artist artist = artists.get(i);
+                    SourceArtist artist = artists.get(i);
                     list.addView(linkRow(artist.name, text("Исполнитель · альбомы", "Artist · albums"),
                             () -> open(() -> showArtist(artist))));
                 }
@@ -412,14 +481,14 @@ public final class SearchSourceSwitch {
             if (list.getChildCount() == 0) list.addView(note(text("Здесь ничего не нашлось.", "Nothing here.")));
         }
 
-        void addAlbumRow(OtherSource.Album album) {
+        void addAlbumRow(SourceAlbum album) {
             String count = album.trackCount > 0 ? album.trackCount + " " + text("тр.", "tracks") : "";
             String subtitle = album.artist.isEmpty() ? count : count.isEmpty() ? album.artist : album.artist + " · " + count;
             list.addView(linkRow(album.title, subtitle, () -> open(() -> showAlbum(album))));
         }
 
-        void addTracks(List<OtherSource.Track> tracks) {
-            for (OtherSource.Track track : tracks) {
+        void addTracks(List<SourceTrack> tracks) {
+            for (SourceTrack track : tracks) {
                 Row row = new Row(this, track);
                 rows.put(track.url, row);
                 list.addView(row.view);
@@ -470,15 +539,15 @@ public final class SearchSourceSwitch {
             });
         }
 
-        void showArtist(OtherSource.Artist artist) {
-            loadPage(() -> showArtist(artist), artist.name, () -> OtherSource.artistAlbums(artist), albums -> {
+        void showArtist(SourceArtist artist) {
+            loadPage(() -> showArtist(artist), artist.name, () -> activeSource.artistAlbums(artist), albums -> {
                 if (albums.isEmpty()) list.addView(note(text("Альбомов не нашлось.", "No albums found.")));
-                for (OtherSource.Album album : albums) addAlbumRow(album);
+                for (SourceAlbum album : albums) addAlbumRow(album);
             });
         }
 
-        void showAlbum(OtherSource.Album album) {
-            loadPage(() -> showAlbum(album), album.title, () -> OtherSource.albumTracks(album), tracks -> {
+        void showAlbum(SourceAlbum album) {
+            loadPage(() -> showAlbum(album), album.title, () -> activeSource.albumTracks(album), tracks -> {
                 if (tracks.isEmpty()) {
                     list.addView(note(text("В альбоме нет треков.", "The album has no tracks.")));
                     return;
@@ -548,7 +617,7 @@ public final class SearchSourceSwitch {
     /** One result: tap to listen, the button on the right downloads. */
     private static final class Row {
         final Screen screen;
-        final OtherSource.Track track;
+        final SourceTrack track;
         final LinearLayout view;
         final TextView title;
         final TextView subtitle;
@@ -556,7 +625,7 @@ public final class SearchSourceSwitch {
         final TextView percent;
         final ProgressBar busy;
 
-        Row(Screen screen, OtherSource.Track track) {
+        Row(Screen screen, SourceTrack track) {
             this.screen = screen;
             this.track = track;
             Context context = screen.context;
@@ -653,8 +722,7 @@ public final class SearchSourceSwitch {
         refreshScreen();
         network.execute(() -> {
             try {
-                AudioStream stream = OtherSource.bestAudio(url);
-                OtherSource.PartSource source = new OtherSource.PartSource(stream.getContent());
+                android.media.MediaDataSource source = activeSource.openPlayback(row.track);
                 handler.post(() -> {
                     if (!url.equals(playingUrl)) return;
                     try {
@@ -738,20 +806,20 @@ public final class SearchSourceSwitch {
         String url = row.track.url;
         if (downloading.containsKey(url) || downloaded.contains(url)) return;
         Context context = row.screen.context.getApplicationContext();
-        OtherSource.Track track = row.track;
+        SourceTrack track = row.track;
         downloading.put(url, 0);
         refreshScreen();
         network.execute(() -> {
             File file = null;
             try {
                 for (int attempt = 1; ; attempt++) {
-                    AudioStream stream = OtherSource.bestAudio(url);
+                    Download dl = activeSource.openDownload(track);
                     String name = (track.artist.isEmpty() ? "" : track.artist + " - ") + track.title
-                            + "." + OtherSource.extensionOf(stream);
+                            + "." + dl.fileExtension();
                     file = LocalMusic.newImportFile(context, name);
                     int[] shown = {-1};
                     try (OutputStream output = new FileOutputStream(file)) {
-                        OtherSource.download(stream.getContent(), output, value -> {
+                        dl.writeTo(output, value -> {
                             if (value == shown[0]) return;
                             shown[0] = value;
                             handler.post(() -> {
@@ -760,10 +828,10 @@ public final class SearchSourceSwitch {
                             });
                         });
                         break;
-                    } catch (OtherSource.RefusedException ex) {
+                    } catch (IOException ex) {
                         //noinspection ResultOfMethodCallIgnored
                         file.delete();
-                        if (attempt >= 3) throw ex;
+                        if (!activeSource.isRetryable(ex) || attempt >= 3) throw ex;
                     }
                 }
                 app.revanced.extension.soundcloud.local.LocalCovers.save(file, track.coverUrl);

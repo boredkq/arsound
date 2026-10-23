@@ -30,6 +30,7 @@ import app.revanced.extension.shared.Logger;
 import app.revanced.extension.shared.Utils;
 import app.revanced.extension.soundcloud.download.ClientProfiles;
 import app.revanced.extension.soundcloud.search.OtherSource;
+import app.revanced.extension.soundcloud.search.SourceTrack;
 
 /**
  * Downloads a list of tracks through the Arsound search, for filling a playlist from a computer:
@@ -338,8 +339,8 @@ public final class BatchActivity extends Activity {
     /** Downloads one track, or finds it among the imported files; the file goes to {@code result[0]}. */
     private static String downloadOne(Context context, String artist, String title, File[] result) throws Exception {
         String key = artist + " " + title;
-        OtherSource.Track match = null;
-        for (OtherSource.Track track : OtherSource.search(artist + " " + title)) {
+        SourceTrack match = null;
+        for (SourceTrack track : OtherSource.search(artist + " " + title)) {
             if (normalize(track.artist).contains(normalize(artist)) && holdsTitle(track.title, title) && !isVariant(track.title, title)) {
                 match = track;
                 break;
