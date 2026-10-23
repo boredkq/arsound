@@ -87,6 +87,23 @@ public final class SearchSourceSwitch {
         if (app.revanced.extension.soundcloud.gateway.GatewayConfig.isConfigured()) list.add(OPEN_MUSIC);
         return list;
     }
+
+    /** Provider filters offered inside Open Music; "" means all providers. */
+    private static final String[] OM_PROVIDERS = {"", "spotify", "soundcloud", "deezer", "ytmusic", "tidal", "qobuz", "yandex"};
+
+    private static String omLabel(String id) {
+        switch (id) {
+            case "": return text("Все", "All");
+            case "spotify": return "Spotify";
+            case "soundcloud": return "SoundCloud";
+            case "deezer": return "Deezer";
+            case "ytmusic": return "YT Music";
+            case "tidal": return "Tidal";
+            case "qobuz": return "Qobuz";
+            case "yandex": return text("Яндекс", "Yandex");
+            default: return id;
+        }
+    }
     private static WeakReference<Screen> screen = new WeakReference<>(null);
 
     private static MediaPlayer player;
@@ -157,6 +174,8 @@ public final class SearchSourceSwitch {
         final LinearLayout arsoundSegment;
         /** Pills to pick the Arsound source; shown only when more than one source is available. */
         final LinearLayout sourceChips;
+        /** Open Music provider filter (All / Spotify / Deezer / …), shown only when Open Music is active. */
+        final LinearLayout providerChips;
         final TextView help;
         final FrameLayout results;
         final LinearLayout list;
@@ -213,6 +232,17 @@ public final class SearchSourceSwitch {
             sourceChips.setPadding(dp(context, 16), 0, dp(context, 16), dp(context, 6));
             sourceChips.setVisibility(View.GONE);
             coordinator.addView(sourceChips, coordinator.indexOfChild(bar) + 1, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            // Provider filter inside Open Music; horizontally scrollable since there are several.
+            providerChips = new LinearLayout(context);
+            providerChips.setOrientation(LinearLayout.HORIZONTAL);
+            providerChips.setPadding(dp(context, 16), 0, dp(context, 16), dp(context, 6));
+            android.widget.HorizontalScrollView providerScroll = new android.widget.HorizontalScrollView(context);
+            providerScroll.setHorizontalScrollBarEnabled(false);
+            providerScroll.setVisibility(View.GONE);
+            providerScroll.addView(providerChips);
+            coordinator.addView(providerScroll, coordinator.indexOfChild(sourceChips) + 1, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             results = new FrameLayout(context);
@@ -321,6 +351,7 @@ public final class SearchSourceSwitch {
 
         /** Rebuilds the source pills from the sources available now, highlighting the active one. */
         void rebuildSourceChips() {
+            rebuildProviderChips();
             List<MusicSource> list = sources();
             if (!list.contains(activeSource)) activeSource = list.get(0);
             sourceChips.removeAllViews();
@@ -355,6 +386,44 @@ public final class SearchSourceSwitch {
             stopPreview();
             activeSource = src;
             rebuildSourceChips();
+            shownQuery = null;
+            search();
+        }
+
+        /** Rebuilds the Open Music provider pills; hidden unless Open Music is the active source. */
+        void rebuildProviderChips() {
+            View scroll = (View) providerChips.getParent();
+            providerChips.removeAllViews();
+            boolean show = arsoundSelected && activeSource == OPEN_MUSIC;
+            if (scroll != null) scroll.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (!show) return;
+            String current = OpenMusicGatewaySource.provider == null ? "" : OpenMusicGatewaySource.provider;
+            for (String id : OM_PROVIDERS) {
+                boolean selected = id.equals(current);
+                TextView chip = new TextView(context);
+                chip.setText(omLabel(id));
+                chip.setGravity(Gravity.CENTER);
+                chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                chip.setTypeface(Typeface.DEFAULT_BOLD);
+                chip.setPadding(dp(context, 12), dp(context, 5), dp(context, 12), dp(context, 5));
+                GradientDrawable fill = new GradientDrawable();
+                fill.setCornerRadius(dp(context, 999));
+                fill.setColor(selected ? withAlpha(textColor, 0xFF) : withAlpha(textColor, 0x1A));
+                chip.setBackground(fill);
+                chip.setTextColor(selected ? inverse(textColor) : withAlpha(textColor, 0xB0));
+                chip.setOnClickListener(v -> selectProvider(id));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.rightMargin = dp(context, 6);
+                providerChips.addView(chip, lp);
+            }
+        }
+
+        void selectProvider(String id) {
+            String current = OpenMusicGatewaySource.provider == null ? "" : OpenMusicGatewaySource.provider;
+            if (id.equals(current)) return;
+            OpenMusicGatewaySource.provider = id;
+            rebuildProviderChips();
             shownQuery = null;
             search();
         }

@@ -22,9 +22,13 @@ public final class GatewayConfig {
     public static final String KEY_QUALITY = "gateway_quality";
     public static final String KEY_COOKIE = "gateway_cookie";
 
-    /** Base origin of the self-hosted hub, trailing slashes trimmed; empty when unset. */
+    /** The bundled Open Music instance, used until the user sets their own base URL. */
+    public static final String DEFAULT_BASE_URL = "https://open-music-hub-kolyamba.vercel.app";
+
+    /** Base origin of the hub, trailing slashes trimmed; falls back to {@link #DEFAULT_BASE_URL}. */
     public static String baseUrl() {
-        return trimTrailingSlashes(Settings.getString(KEY_BASE_URL, ""));
+        String stored = trimTrailingSlashes(Settings.getString(KEY_BASE_URL, ""));
+        return stored.isEmpty() ? DEFAULT_BASE_URL : stored;
     }
 
     /** Optional shared secret for a self-hosted instance behind an access check ({@code X-Arsound-Key}). */

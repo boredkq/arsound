@@ -47,6 +47,9 @@ import app.revanced.extension.soundcloud.search.SourceTrack;
 public final class OpenMusicGatewaySource implements MusicSource {
 
     private static final String ALL_PROVIDERS = "spotify,soundcloud,deezer,ytmusic,tidal,qobuz,yandex";
+
+    /** When non-empty, search is limited to this single provider id; empty means all providers. */
+    public static volatile String provider = "";
     private static final int CONNECT_TIMEOUT_MS = 15_000;
     // Tidal's free backend on Render can cold-start up to ~30s; keep read generous.
     private static final int READ_TIMEOUT_MS = 35_000;
@@ -64,7 +67,8 @@ public final class OpenMusicGatewaySource implements MusicSource {
 
     @Override
     public List<SourceTrack> search(String query) throws IOException {
-        return tracks(getJson("/api/search?q=" + enc(query) + "&providers=" + ALL_PROVIDERS));
+        String providers = (provider == null || provider.isEmpty()) ? ALL_PROVIDERS : provider;
+        return tracks(getJson("/api/search?q=" + enc(query) + "&providers=" + providers));
     }
 
     @Override
