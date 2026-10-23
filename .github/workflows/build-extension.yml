@@ -34,4 +34,6 @@ jobs:
           # The ReVanced Gradle plugin lives in GitHub Packages; the built-in token reads it.
           ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
           ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :extensions:arsound:assembleRelease --stacktrace --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :extensions:arsound:assembleRelease --stacktrace --no-daemon
